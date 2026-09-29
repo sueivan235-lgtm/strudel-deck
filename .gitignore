@@ -1,0 +1,6 @@
+node_modules/
+# test fixtures: local mirror of sample packs (large, fetched separately)
+test/fixtures/
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,222 @@
+// ════════════════════════════════════════════════════════════════════
+//  FERRUM · hard industrial techno · live set
+// ════════════════════════════════════════════════════════════════════
+//  Every  name: …  line is a layer and gets a channel strip on the deck.
+//  Every slider() is a control; the comment after it names the positions.
+//  Sections (// ─── NAME ───) group the controls on the deck.
+//  Plays on strudel.cc too: paste it there and press Ctrl+Enter.
+//  First run downloads Dirt-Samples; give it a few bars to fill in.
+// ════════════════════════════════════════════════════════════════════
+
+samples('github:tidalcycles/dirt-samples')
+
+const BPM  = 150       // 145–160
+const ROOT = 29        // F1 as a MIDI note; 31 = G1, 27 = D#1
+setcpm(BPM / 4)
+
+// ─── MACROS ──────────────────────────────────────────────────────────
+const HARD      = slider(0.6, 0, 1)        // drive on every distorted layer, crush on perc
+const GRIT      = slider(1, 0, 4, 1)       // drive flavour: soft · diode · hard clip · wavefold · chebyshev
+const FILTER    = slider(0.5, 0, 1)        // DJ filter on all but the kick: below .5 low-pass, above high-pass
+const LOWCUT    = slider(20, 20, 800)      // high-pass on the low bus (rumble, bass, noise, drone)
+const PUMP      = slider(0.9, 0, 1)        // sidechain depth; keeps pumping with the kick muted
+const PUMP_REL  = slider(0.25, 0.05, 0.6)  // sidechain recovery in seconds
+const SPACE     = slider(0.5, 0, 1)        // reverb sends on the fx bus
+const ECHO      = slider(0.5, 0, 1)        // dotted-8th delay sends on the fx bus
+const BUILD     = slider(0, 0, 1)          // riser + snare roll: push up over 8–16 bars, snap to 0 on the drop
+const TRANS     = slider(0, -5, 7, 1)      // key shift in semitones (synth kick, rumble, bass, acid, stabs, drone)
+
+// ─── HELPERS · shared by the layers ──────────────────────────────────
+// .grit(lo, hi, vol): drive whose amount follows HARD and flavour follows GRIT.
+// .gritlow(): the same for the kick and low end; wavefold and chebyshev become
+// tanh and cubic there, so the sub survives.
+const DTYPE         = GRIT.pick([0, 4, 2, 6, 8])           // scurve, diode, hard, fold, chebyshev
+const DTYPE_LOW     = GRIT.pick([0, 4, 2, 1, 3])           // scurve, diode, hard, soft, cubic
+const GRIT_TRIM     = GRIT.pick([1.26, 1, 1, 1.58, 1.35])  // evens out loudness between flavours
+const GRIT_TRIM_LOW = GRIT.pick([1.26, 1, 1, 0.9, 0.85])
+register('grit', (lo, hi, vol, pat) => pat
+  .distort(HARD.range(lo, hi)).distortvol(GRIT_TRIM.mul(vol)).distorttype(DTYPE))
+register('gritlow', (lo, hi, vol, pat) => pat
+  .distort(HARD.range(lo, hi)).distortvol(GRIT_TRIM_LOW.mul(vol)).distorttype(DTYPE_LOW))
+
+// Buses. .lowbus(verb): orbit 2, ducked by the pump, dark reverb, LOWCUT.
+// .fxbus(verb, echo): orbit 3, shared reverb and dotted-8th delay.
+// .topbus(): orbit 4, dry. All three follow the FILTER macro.
+register('lowbus', (verb, pat) => pat
+  .room(verb).roomsize(3).roomlp(500).roomdim(80).hpf(LOWCUT).djf(FILTER).orbit(2))
+register('fxbus', (verb, echo, pat) => pat
+  .room(SPACE.mul(verb * 2)).roomsize(2.5).roomlp(9000)
+  .delay(ECHO.mul(echo * 2)).delayfeedback(0.45).djf(FILTER).orbit(3))
+register('topbus', (pat) => pat.djf(FILTER).orbit(4))
+
+// ─── KICK ────────────────────────────────────────────────────────────
+const KICK_SND  = slider(0, 0, 3, 1)       // 909 · synth · hardkick · gabba
+const KICK_RHY  = slider(0, 0, 5, 1)       // 4/4 · pickup · gallop · broken · half-time · 8ths
+const KICK_N    = slider(0, 0, 5, 1)       // sample variant for hardkick and gabba
+const FILL      = slider(1, 0, 2, 1)       // last bar of 8: none · drop beat 4 · roll on beat 4
+
+const RHY = KICK_RHY.pick([
+  "x*4",
+  "x x x [x ~ ~ x]",
+  "x [~ ~ ~ x] x [~ ~ ~ x]",
+  "[x ~ ~ x] [~ ~ x ~] [x ~ ~ x] [~ ~ x ~]",
+  "x ~ x ~",
+  "x*8",
+])
+const KICK_GRID = FILL.pick([
+  RHY,
+  RHY.lastOf(8, x => x.mask("1 1 1 0")),
+  RHY.lastOf(8, x => x.ply("1 1 1 4")),
+])
+
+kick: KICK_SND.pick([
+    s("bd:5").gritlow(3, 7, 0.48),                             // 909: low tune, long decay
+    stack(                                                     // tuned sine with pitch drop + 909 click
+      note(TRANS.add(ROOT)).s("sine").penv(36).pdecay(0.08).pcurve(1).decay(0.38)
+        .gritlow(4, 9, 0.52),
+      s("bd:22").bpf(3500).velocity(0.8)),
+    s("hardkick").n(KICK_N).gritlow(2.5, 4, 0.41),             // pre-distorted kicks
+    s("gabbalouder").n(KICK_N).gritlow(2.5, 4, 0.48),          // gabber
+  ]).struct(KICK_GRID).clip(1).orbit(1)
+
+// silent trigger on the kick grid that ducks the low bus, even with the kick muted
+pump: s("sine").struct(KICK_GRID).decay(0.01).sustain(0).postgain(0)
+  .duckorbit(2).duckdepth(PUMP).duckattack(PUMP_REL)
+  .mask(PUMP.fmap(v => v > 0.01))
+
+// ─── LOW END · sidechained ───────────────────────────────────────────
+const RUMBLE_LP = slider(160, 60, 500)     // rumble tone in Hz; the noise bed follows it
+
+// a tuned sine thump on the kick grid, driven, heard only through the dark reverb
+rumble: note(TRANS.add(ROOT)).s("sine").penv(24).pdecay(0.1).pcurve(1).decay(0.4)
+  .struct(KICK_GRID).lpf(RUMBLE_LP)
+  .gritlow(3, 6, 0.09).dry(0).lowbus(1)
+
+const ROLL_RHY  = slider(0, 0, 4, 1)       // ~xxx · ~x~x · ~~xx · ~xx~ · offbeat
+const ROLL_LP   = slider(220, 80, 1200)    // bass cutoff in Hz
+rolling: note(TRANS.add(ROOT)).s("sawtooth")
+  .struct(ROLL_RHY.pick(["[~ x x x]*4", "[~ x ~ x]*4", "[~ ~ x x]*4", "[~ x x ~]*4", "[~ x]*4"]))
+  .decay(0.09).sustain(0).lpf(ROLL_LP)
+  .gritlow(3, 6, 0.29).lowbus(0)
+
+// pumping brown-noise bed
+noise: s("brown").struct("x*4").clip(1).gain(2.5).lpf(RUMBLE_LP.mul(1.5))
+  .gritlow(3, 4.5, 0.18).lowbus(0)
+
+const DRONE_CH  = slider(0, 0, 3, 1)       // fifth · flat-2 cluster · minor 7 · moving
+const DRONE_LP  = slider(900, 200, 4000)   // pad cutoff in Hz
+// pumping pad, retriggers every 4 bars
+drone: note(DRONE_CH.pick(["[0,7,12]", "[0,1,7]", "[0,3,7,10]", "<[0,7] [0,7] [1,8] [-2,5]>/4"])
+    .add(TRANS).add(ROOT + 24))
+  .s("supersaw").struct("<x ~ ~ ~>").clip(4).attack(1.5).release(2.5).lpf(DRONE_LP)
+  .gritlow(2.5, 4, 0.11).lowbus(0.35)
+
+// ─── TOPS ────────────────────────────────────────────────────────────
+const HAT_RHY   = slider(0, 0, 3, 1)       // 16ths · offbeat 16ths · 8ths · euclid 11/16
+const HAT_DEC   = slider(1, 0, 5, 1)       // closed-hat decay (909 sample number)
+hats: s(HAT_RHY.pick(["hc*16", "[~ hc]*8", "hc*8", "hc(11,16,3)"]))
+  .n(HAT_DEC).gain(1.05).velocity("[.55 .75 1 .75]*4").hpf(3000)
+  .pan(sine.range(0.4, 0.6).fast(2)).topbus()
+
+const OH_DEC    = slider(2, 0, 5, 1)       // open-hat decay (909 sample number)
+openhat: s("[~ ho]*4").n(OH_DEC).gain(0.7).hpf(3500).topbus()
+
+// 909 ride on 8ths (cr is the ride in Dirt-Samples)
+ride: s("cr*8").n(3).gain(0.5).velocity("[.7 1]*4").hpf(3000).topbus()
+
+// crash on bar 1 of every 8
+crash: s("<cc:2 ~ ~ ~ ~ ~ ~ ~>").gain(0.4).hpf(400).fxbus(0.4, 0)
+
+const BRK_RHY   = slider(0, 0, 2, 1)       // straight · stutter · random
+const BRK_SEED  = slider(0, 0, 64, 1)      // a new random loop per number
+// chopped amen, low end removed
+breaks: s("amencutup*16")
+  .n(BRK_RHY.pick([run(16), "0 1 2 3 0 1 2 3 8 8 9 9 12 13 14 15", irand(32).segment(16)]))
+  .clip(1).hpf(350).grit(3, 6, 0.145)
+  .ribbon(BRK_SEED, 1).topbus()
+
+// ─── CLAP / PERC ─────────────────────────────────────────────────────
+const CLAP_RHY  = slider(0, 0, 3, 1)       // on 2 and 4 · with pickup · clap and snare · broken
+clap: s(CLAP_RHY.pick(["~ cp ~ cp", "~ cp ~ [cp ~ ~ cp]", "~ [cp,sn:51] ~ [cp,sn:51]", "~ ~ [~ cp] ~ ~ ~ cp ~"]))
+  .hpf(200).grit(2.5, 5, 0.23).fxbus(0.35, 0.1)
+
+const PERC_KIT  = slider(0, 0, 3, 1)       // industrial · metal · noise · alternating
+const PERC_RHY  = slider(0, 0, 3, 1)       // euclid 5/16 · 7/16 · 9/16 · syncopated
+const PERC_SEED = slider(0, 0, 64, 1)      // a new random groove per number
+// metallic industrial hits
+perc: s(PERC_KIT.pick(["industrial", "metal", "noise2", "<industrial metal>"]))
+  .struct(PERC_RHY.pick(["x(5,16)", "x(7,16,2)", "x(9,16,1)", "[~ x ~ x x ~ x ~]*2"]))
+  .n(irand(32)).gain(PERC_KIT.pick([0.3, 0.76, 0.62, 0.32])).speed(rand.range(0.8, 1.4))
+  .hpf(400).crush(HARD.range(16, 5)).pan(rand)
+  .ribbon(PERC_SEED, 2).fxbus(0.2, 0.3)
+
+const TOM_RHY   = slider(0, 0, 3, 1)       // 3-3-2 · offbeat · fill · tribal 16ths
+toms: s(TOM_RHY.pick([
+    "lt:3 ~ ~ lt:3 ~ ~ lt:3 ~ ~ ~ mt:7 ~ ~ ~ ~ ~",
+    "[~ lt:3] [~ mt:7] [~ lt:3] [ht:11 mt:7]",
+    "~ ~ ~ ~ ~ ~ ~ ~ lt:3 ~ lt:3 ~ mt:7 mt:7 ht:11 ht:11",
+    "[lt:3 lt:3 mt:7 ht:11]*4",
+  ])).hpf(60).grit(3, 6, 0.112).fxbus(0.3, 0.15)
+
+// ─── SYNTHS ──────────────────────────────────────────────────────────
+const ACID_PAT  = slider(0, 0, 4, 1)       // driver · roller · sparse · three over four · climbing
+const ACID_LP   = slider(400, 100, 4000)   // cutoff in Hz
+const ACID_RES  = slider(10, 0, 28)        // ladder resonance; screams near the top
+const ACID_ENV  = slider(3, 0, 8)          // filter envelope depth
+acid: note(ACID_PAT.pick([
+    "0 0 12 0 0 0 1 0 0 12 0 0 3 0 1 0",
+    "0 12 0 3 0 12 0 1 0 12 0 7 0 12 5 3",
+    "0 ~ ~ 0 ~ ~ 12 ~ 0 ~ ~ 1 ~ ~ 12 ~",
+    "{0 12 1}%16",
+    "<[0 0 12 0]*4 [1 1 13 1]*4 [3 3 15 3]*4 [1 1 13 1]*4>",
+  ]).add(TRANS).add(ROOT + 12))
+  .s("sawtooth").decay(0.13).sustain(0)
+  .lpf(ACID_LP).lpq(ACID_RES).lpenv(ACID_ENV).lpdecay(0.12).ftype("ladder")
+  .velocity("[1 .6 .8 .6]*4")
+  .grit(3, 6, 0.163).fxbus(0.1, 0.3)
+
+const STAB_SND  = slider(0, 0, 1, 1)       // supersaw chord · rave stab sample
+const STAB_RHY  = slider(0, 0, 4, 1)       // bar end · offbeats · euclid · syncopated · every 4 bars
+const STAB_LP   = slider(2500, 300, 8000)  // stab cutoff in Hz
+stab: STAB_SND.pick([
+    note("[0,3,7,12]".add(TRANS).add(ROOT + 24)).s("supersaw").decay(0.22).sustain(0).grit(2.5, 5, 0.16),
+    s("stab").n(4).gain(1.4),
+  ])
+  .struct(STAB_RHY.pick(["~ ~ ~ [~ x]", "[~ x] ~ [~ x] ~", "x(3,8,2)", "~ x ~ ~ ~ ~ x ~", "<x ~ ~ ~>"]))
+  .lpf(STAB_LP).fxbus(0.35, 0.35)
+
+// every other bar
+hoover: s("<hoover:0 ~ hoover:2 ~ hoover:4 ~ hoover:2 ~>").hpf(150)
+  .grit(2.5, 4, 0.38).fxbus(0.35, 0.25)
+
+// ─── VOX / FX ────────────────────────────────────────────────────────
+const VOX_PAT   = slider(0, 0, 3, 1)       // every 8 bars · end of 4 · every 4 · stutter
+vox: VOX_PAT.pick([
+    s("<rave:0 ~ ~ ~ ~ ~ ~ ~>"),
+    s("<~ ~ ~ [~ ~ ~ rave:4]>"),
+    s("<[rave:5 ~ ~ ~] ~ ~ ~>"),
+    s("<[~ ~ ~ rave:4*4] ~>").end(0.2),
+  ]).gain(0.4).hpf(250).fxbus(0.4, 0.45)
+
+// noise riser and snare roll: both follow BUILD
+riser: s("white").seg(16).clip(1).gain(1.8)
+  .hpf(BUILD.range(300, 9000)).velocity(BUILD.range(0.1, 1))
+  .mask(BUILD.fmap(b => b > 0.02)).fxbus(0.5, 0.3)
+
+snroll: s(BUILD.mul(4).pick(["~", "sn:42*4", "sn:42*8", "sn:42*16", "sn:42*32"]))
+  .velocity(BUILD.range(0.3, 1)).hpf(BUILD.range(150, 1500))
+  .grit(2.5, 4.5, 0.097).fxbus(0.3, 0.2)
+
+// ─── SET MAP · about 18 min at 150 BPM (16 bars ≈ 26 s) ──────────────
+//  The eight deck scenes follow this route. Recall them on the bar; a fade of
+//  4–8 bars turns Break into a full build (BUILD, LOWCUT and FILTER all ramp).
+//  0:00  Intro: kick + rumble. Bring in openhat, then hats over 32 bars.
+//  1:30  Groove: clap, perc (new PERC_SEED every 16–32 bars), rolling bass.
+//  3:00  Acid: pattern 0, open ACID_LP slowly, ride in, HARD towards 0.8.
+//  5:00  Peak: ACID_PAT 1, toms, breaks, crash.
+//  6:00  Break: kick out (the pump keeps the low end breathing), drone and noise in,
+//        BUILD and LOWCUT up over 8–16 bars.
+//  6:30  Drop: synth kick, clap + snare, stabs, vox. Recall with no fade.
+//  9:00  Industrial: broken kick, GRIT wavefold, HARD 1, noise perc, random breaks.
+// 12:00  Gabber: gabba kick, TRANS +2, acid three-over-four, hoover.
+// 15:30  Outro: back to Intro, KICK_RHY half-time, FILTER down, master out.

@@ -1,0 +1,40 @@
+// ════════════════════════════════════════════════════════════════════
+//  Starter · how the deck reads your code
+// ════════════════════════════════════════════════════════════════════
+//  name: pattern                 a layer: channel strip with fader, mute, solo
+//  const NAME = slider(v, min, max, step)
+//                                a control on the deck, called NAME
+//  a comment after a slider      "a · b · c" labels the positions of a switch,
+//                                anything else is shown as help
+//  // ─── TITLE ───               starts a section of controls
+//  Change anything, then press Update (Cmd+Enter). The deck follows the code.
+// ════════════════════════════════════════════════════════════════════
+
+setcpm(128/4)
+
+// ─── DRUMS ───────────────────────────────────────────────────────────
+const KICK_PAT = slider(0, 0, 2, 1)       // four on the floor · broken · half-time
+const HAT_OPEN = slider(0.4, 0, 1)        // open-hat level
+
+kick: s(KICK_PAT.pick(["bd*4", "bd ~ [~ bd] ~ bd ~ [bd bd] ~", "bd ~ ~ ~ bd ~ ~ ~"]))
+  .bank("RolandTR909").gain(1.1)
+
+hats: s("hh*16").bank("RolandTR909").gain("[.35 .55]*8").hpf(5000)
+
+openhat: s("[~ oh]*4").bank("RolandTR909").gain(HAT_OPEN)
+
+clap: s("~ cp ~ cp").bank("RolandTR909").room(0.25)
+
+// ─── BASS ────────────────────────────────────────────────────────────
+const BASS_LP  = slider(500, 100, 3000)   // cutoff in Hz
+const BASS_ENV = slider(2, 0, 6)          // filter envelope depth
+
+bass: note("<[c1 ~ c2 ~]*2 [eb1 ~ eb2 ~]*2>").s("sawtooth")
+  .lpf(BASS_LP).lpenv(BASS_ENV).lpdecay(0.15).decay(0.2).sustain(0).gain(0.8)
+
+// ─── CHORDS ──────────────────────────────────────────────────────────
+const CHORD_SPACE = slider(0.4, 0, 1)     // reverb send
+
+chords: note("<[c3,eb3,g3,bb3] [ab2,c3,eb3,g3] [f2,ab2,c3,eb3] [g2,b2,d3,f3]>")
+  .s("supersaw").struct("~ x ~ ~ ~ x ~ ~").decay(0.3).sustain(0)
+  .lpf(2200).room(CHORD_SPACE).gain(0.45)
